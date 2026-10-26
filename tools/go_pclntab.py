@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""List Go functions from pclntab in a memory-dumped image (/tmp/zl/image.bin, base 0x400000) and
-disassemble the named ones with call/string annotations. Usage: go_pclntab.py [func ...]"""
-import struct, sys
-img=open('/tmp/zl/image.bin','rb').read(); BASE=0x400000
+"""List Go functions from pclntab in a memory-dumped image (base 0x400000) and disassemble
+the named ones with call/string annotations.
+Usage: IMAGE=<stitched image.bin> go_pclntab.py [func ...]   (IMAGE defaults to /tmp/zl/image.bin)"""
+import os, struct, sys
+img=open(os.environ.get('IMAGE', '/tmp/zl/image.bin'),'rb').read(); BASE=0x400000
 i=0
 while True:
     i=img.find(b'\xf1\xff\xff\xff\x00\x00\x01\x08',i)
