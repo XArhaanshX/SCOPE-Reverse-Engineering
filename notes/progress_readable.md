@@ -177,9 +177,9 @@ The key depends on the hostname of the licensing PC, the drive letter, and the d
 
 That is acceptable. Our task is the source of the application, and the application is the launcher. Every function is now named and understood.
 
-### Where the work stops
+### Where the work stands
 
-The last step, writing the launcher out as Go source, has not started. Whoever picks it up should start from the "Handoff status" and "Reproducing everything" sections of `PROGRESS.md`. They list what is done, the exact commands to rebuild every intermediate file, and the known rough edges in our tools.
+Writing the launcher out as Go source is now done — it lives in `reconstruction/`, builds, and passes its tests (see Part 3 and `reconstruction/README.md`). To redo the whole chain from scratch, follow the hands-on guide in Part 3, or the "Reproducing everything" section of `PROGRESS.md`, which also lists the known rough edges in our tools. The embedded payload stays encrypted.
 
 A few Go facts will help when reading the disassembly:
 
