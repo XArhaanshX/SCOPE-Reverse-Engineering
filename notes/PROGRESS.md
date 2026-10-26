@@ -144,6 +144,29 @@ Verified on this machine (Go 1.27, Wine 11.19, bubblewrap available):
 - `go vet ./...` and `go build ./...` are clean; the `GOOS=windows GOARCH=amd64` cross-build produces a PE32+ console exe.
 - Appending the original's trailer to a fresh build and running it under Wine with no removable drive reproduces the original's output exactly: `No licensed USB drive was detected. Please connect it and try again.`, a blank line, then `Press Enter to close.`, exit code 1. Reaching the USB check at all confirms the trailer parsing is correct as well.
 
+## Best practices applied (verification)
+
+Following standard Go-RE practice (Mandiant GoReSym for symbol recovery) and
+CTF-writeup practice (runnable checks, pinned tool versions, reproducible steps):
+
+- `reconstruction/internal/lock` has Go unit tests (`go test ./...`, all pass)
+  that check the hash, the full key-derivation + AES-256-GCM path, the exact
+  wrong-drive error, and parsing of the real `ppqqcc.exe` trailer. The crypto
+  vectors are computed independently in Python, so Go and Python agree.
+- GoReSym on a build of the reconstruction recovers the same function namespace
+  read from the original's pclntab (`main.*`, all `zeuslock/internal/lock.*`).
+- GoReSym on the packed original returns "failed to locate pclntab", confirming
+  the Go metadata only appears after unpacking.
+- Tool versions on this machine: Go 1.27.1, Wine 11.19, GoReSym 1.7.1,
+  pefile/capstone/unicorn/pycryptodome in `tools/re-venv`.
+
+Note: re-running `ppqqcc.exe` here to regenerate the memory dump and feed it to
+GoReSym was blocked by this environment's safety guard, so GoReSym-on-the-dump
+was not repeated locally. The dump-based symbol recovery is already captured by
+`tools/go_pclntab.py` in the original analysis; run GoReSym on the dump on a host
+where executing the binary in the sandbox is permitted if byte-level confirmation
+is wanted.
+
 ## Next steps
 
 1. The embedded payload stays encrypted. The organisers have given no drive details, so `tools/zeuslock_decrypt.py` only documents the scheme; it is not a blocker for the deliverable.

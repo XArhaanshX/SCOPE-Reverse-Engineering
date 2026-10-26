@@ -71,3 +71,27 @@ No licensed USB drive was detected. Please connect it and try again.
 
 Press Enter to close.
 ```
+
+## Tests
+
+```sh
+go test ./...   # internal/lock
+```
+
+- `TestGenerateUSBHash` and `TestDecryptPayloadEndToEnd` check the hash and the
+  full `sha512(salt‖usbHash)[:32]` → AES-256-GCM path against vectors computed
+  independently in Python (`tools/zeuslock_decrypt.py` uses the same scheme).
+- `TestDecryptPayloadWrongKey` checks the exact wrong-drive error.
+- `TestExtractRealTrailer` parses the real `challenges/.../ppqqcc.exe` trailer
+  and asserts the documented nonce, salt and ciphertext length.
+
+## Cross-validation with GoReSym
+
+Running Mandiant's [GoReSym](https://github.com/mandiant/GoReSym) on a build of
+this source recovers exactly the function namespace that was read from the
+original's `pclntab`: `main.main/fail/pause` and all of
+`zeuslock/internal/lock.*` (`ExtractSelfTrailer`, `ExtractTrailerFromFile`,
+`GetUSBCandidates`, `getVolumeInfo`, `getDeviceInfo`, `getDriveSize`,
+`GenerateUSBHash`, `DecryptPayload`, `RunEmbeddedExecutable`, `init`). GoReSym on
+the *packed* original fails with "failed to locate pclntab", which is why the
+binary must be unpacked first.
