@@ -6,3 +6,7 @@ venv/
 *.pyc
 .DS_Store
 challenges/binaries/
+tools/re-venv/
+challenges/task3_ppqqcc/unpacked/
+image_after.bin
+payload_*.bin
