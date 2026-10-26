@@ -1,0 +1,248 @@
+==== zeuslock/internal/lock.init
+4c1b80: cmp rsp, qword ptr [r14 + 0x10]
+4c1b84: jbe 0x4c1bd6
+4c1b86: push rbp
+4c1b87: mov rbp, rsp
+4c1b8a: sub rsp, 0x28
+4c1b8e: lea rax, [rip + 0x33956]   ; ->4f54eb 
+4c1b95: mov ebx, 0x33   ; str='no protected payload is embedded in this executable'
+4c1b9a: xor ecx, ecx
+4c1b9c: xor edi, edi
+4c1b9e: mov rsi, rdi
+4c1ba1: call 0x4a4560   ; fmt.Errorf
+4c1ba6: mov qword ptr [rip + 0xf4bc3], rax
+4c1bad: cmp dword ptr [rip + 0x179cdc], 0
+4c1bb4: je 0x4c1bc9
+4c1bb6: call 0x468bc0   ; runtime.gcWriteBarrier2
+4c1bbb: mov qword ptr [r11], rbx
+4c1bbe: mov rax, qword ptr [rip + 0xf4bb3]
+4c1bc5: mov qword ptr [r11 + 8], rax
+4c1bc9: mov qword ptr [rip + 0xf4ba8], rbx
+4c1bd0: add rsp, 0x28
+4c1bd4: pop rbp
+4c1bd5: ret 
+4c1bd6: call 0x466c80   ; runtime.morestack_noctxt
+4c1bdb: jmp 0x4c1b80
+
+==== zeuslock/internal/lock.ExtractSelfTrailer
+4c2500: cmp rsp, qword ptr [r14 + 0x10]
+4c2504: jbe 0x4c256b
+4c2506: push rbp
+4c2507: mov rbp, rsp
+4c250a: sub rsp, 0x38
+4c250e: call 0x49fb60   ; os.Executable
+4c2513: test rcx, rcx
+4c2516: je 0x4c2560
+4c2518: movups xmmword ptr [rsp + 0x28], xmm15
+4c2520: je 0x4c2526
+4c2522: mov rcx, qword ptr [rcx + 8]
+4c2526: mov qword ptr [rsp + 0x28], rcx
+4c252b: mov qword ptr [rsp + 0x30], rdi
+4c2530: lea rax, [rip + 0x2e5b0]   ; ->4f0ae7 
+4c2537: mov ebx, 0x1b   ; str='locating own executable: %w'
+4c253c: lea rcx, [rsp + 0x28]
+4c2541: mov edi, 1
+4c2546: mov rsi, rdi
+4c2549: call 0x4a4560   ; fmt.Errorf
+4c254e: mov rcx, rbx
+4c2551: mov rbx, rax
+4c2554: xor eax, eax
+4c2556: add rsp, 0x38
+4c255a: pop rbp
+4c255b: ret 
+4c2560: call 0x4c2580   ; zeuslock/internal/lock.ExtractTrailerFromFile
+4c2565: add rsp, 0x38
+4c2569: pop rbp
+4c256a: ret 
+4c256b: call 0x466c80   ; runtime.morestack_noctxt
+4c2570: jmp 0x4c2500
+
+==== zeuslock/internal/lock.ExtractTrailerFromFile
+4c2580: lea r12, [rsp - 8]
+4c2585: cmp r12, qword ptr [r14 + 0x10]
+4c2589: jbe 0x4c2876
+4c258f: push rbp
+4c2590: mov rbp, rsp
+4c2593: add rsp, -0x80
+4c2597: mov qword ptr [rsp + 0x90], rax
+4c25a0: call 0x4a03c0   ; os.ReadFile
+4c25a5: test rdi, rdi
+4c25a8: jne 0x4c2671
+4c25ae: cmp rbx, 0x10
+4c25b2: jl 0x4c265b
+4c25b8: mov rdx, rcx
+4c25bb: sub rdx, rbx
+4c25be: lea rsi, [rdx + 0x10]
+4c25c2: mov rdi, rsi
+4c25c5: neg rsi
+4c25c8: sar rsi, 0x3f
+4c25cc: lea r8, [rbx - 0x10]
+4c25d0: and rsi, r8
+4c25d3: add rsi, rax
+4c25e0: cmp rdi, 8
+4c25e4: jb 0x4c2868
+4c25ea: mov qword ptr [rsp + 0x28], rbx
+4c25ef: mov qword ptr [rsp + 0x60], rax
+4c25f4: mov qword ptr [rsp + 0x58], rsi
+4c25f9: mov qword ptr [rsp + 0x30], rcx
+4c25fe: mov qword ptr [rsp + 0x48], rdx
+4c2603: mov rax, rsi
+4c2606: lea rbx, [rip + 0xe2cb3]   ; ->5a52c0 
+4c260d: mov ecx, 8
+4c2612: call 0x4033c0   ; runtime.memequal
+4c2617: test al, al
+4c2619: je 0x4c2645
+4c261b: mov r8, qword ptr [rsp + 0x48]
+4c2620: add r8, 8
+4c2624: neg r8
+4c2627: sar r8, 0x3f
+4c262b: and r8d, 8
+4c262f: mov r9, qword ptr [rsp + 0x58]
+4c2634: add r8, r9
+4c2637: xor eax, eax
+4c2639: xor ecx, ecx
+4c2640: jmp 0x4c26c2
+4c2645: mov rbx, qword ptr [rip + 0xf4124]
+4c264c: mov rcx, qword ptr [rip + 0xf4125]
+4c2653: xor eax, eax
+4c2655: sub rsp, -0x80
+4c2659: pop rbp
+4c265a: ret 
+4c265b: mov rbx, qword ptr [rip + 0xf410e]
+4c2662: mov rcx, qword ptr [rip + 0xf410f]
+4c2669: xor eax, eax
+4c266b: sub rsp, -0x80
+4c266f: pop rbp
+4c2670: ret 
+4c2671: movups xmmword ptr [rsp + 0x70], xmm15
+4c2677: je 0x4c267d
+4c2679: mov rdi, qword ptr [rdi + 8]
+4c267d: mov qword ptr [rsp + 0x70], rdi
+4c2682: mov qword ptr [rsp + 0x78], rsi
+4c2687: lea rax, [rip + 0x2cb58]   ; ->4ef1e6 
+4c268e: mov ebx, 0x16   ; str='reading executable: %w'
+4c2693: lea rcx, [rsp + 0x70]
+4c2698: mov edi, 1
+4c269d: mov rsi, rdi
+4c26a0: call 0x4a4560   ; fmt.Errorf
+4c26a5: mov rcx, rbx
+4c26a8: mov rbx, rax
+4c26ab: xor eax, eax
+4c26ad: sub rsp, -0x80
+4c26b1: pop rbp
+4c26b2: ret 
+4c26b3: shl rcx, 8
+4c26b7: movzx r9d, byte ptr [r8 + rax]
+4c26bc: inc rax
+4c26bf: or rcx, r9
+4c26c2: cmp rax, 8
+4c26c6: jge 0x4c26cf
+4c26c8: jb 0x4c26b3
+4c26ca: jmp 0x4c285e
+4c26cf: mov rax, qword ptr [rsp + 0x28]
+4c26d4: mov r8, rax
+4c26d7: sub r8, rcx
+4c26da: lea r9, [r8 - 0x10]
+4c26e0: test r9, r9
+4c26e3: jl 0x4c26eb
+4c26e5: cmp rcx, 0x2c
+4c26e9: jae 0x4c2713
+4c26eb: lea rax, [rip + 0x2abad]   ; ->4ed29f 
+4c26f2: mov ebx, 0xf   ; str='corrupt trailer'
+4c26f7: xor ecx, ecx
+4c26f9: xor edi, edi
+4c26fb: mov rsi, rdi
+4c2700: call 0x4a4560   ; fmt.Errorf
+4c2705: mov rcx, rbx
+4c2708: mov rbx, rax
+4c270b: xor eax, eax
+4c270d: sub rsp, -0x80
+4c2711: pop rbp
+4c2712: ret 
+4c2713: lea rcx, [rax - 0x10]
+4c2720: cmp rcx, r9
+4c2723: jb 0x4c2856
+4c2729: mov rdx, qword ptr [rsp + 0x30]
+4c272e: sub rdx, r8
+4c2731: lea rbx, [rdx + 0x10]
+4c2735: mov rsi, rbx
+4c2738: neg rbx
+4c273b: sar rbx, 0x3f
+4c273f: and rbx, r9
+4c2742: sub rax, r8
+4c2745: mov rdi, qword ptr [rsp + 0x60]
+4c274a: lea r8, [rbx + rdi]
+4c274e: cmp rsi, 0xc
+4c2752: jb 0x4c2849
+4c2760: cmp rsi, 0x2c
+4c2764: jb 0x4c283c
+4c276a: lea rbx, [rdi + rbx]
+4c276e: lea rbx, [rbx + 0xc]
+4c2772: cmp rax, 0x2c
+4c2776: jb 0x4c282f
+4c277c: mov qword ptr [rsp + 0x40], rdx
+4c2781: mov qword ptr [rsp + 0x48], rsi
+4c2786: mov qword ptr [rsp + 0x50], r8
+4c278b: mov qword ptr [rsp + 0x68], rbx
+4c2790: mov qword ptr [rsp + 0x38], rax
+4c2795: lea rax, [rip + 0x19884]   ; ->4dc020 
+4c27a0: call 0x40e540   ; runtime.newobject
+4c27a5: mov qword ptr [rax + 8], 0xc
+4c27ad: mov rcx, qword ptr [rsp + 0x48]
+4c27b2: mov qword ptr [rax + 0x10], rcx
+4c27b6: mov rcx, qword ptr [rsp + 0x40]
+4c27bb: lea rdx, [rcx - 0x1c]
+4c27bf: mov rbx, rdx
+4c27c2: neg rdx
+4c27c5: sar rdx, 0x3f
+4c27c9: and edx, 0x2c
+4c27cc: mov rsi, qword ptr [rsp + 0x50]
+4c27d1: add rdx, rsi
+4c27d4: cmp dword ptr [rip + 0x1790b5], 0
+4c27db: jne 0x4c27e4
+4c27dd: mov rdi, qword ptr [rsp + 0x68]
+4c27e2: jmp 0x4c27f9
+4c27e4: call 0x468be0   ; runtime.gcWriteBarrier3
+4c27e9: mov qword ptr [r11], rsi
+4c27ec: mov rdi, qword ptr [rsp + 0x68]
+4c27f1: mov qword ptr [r11 + 8], rdi
+4c27f5: mov qword ptr [r11 + 0x10], rdx
+4c27f9: mov qword ptr [rax], rsi
+4c27fc: mov qword ptr [rax + 0x38], 0x20
+4c2804: lea rsi, [rcx + 4]
+4c2808: mov qword ptr [rax + 0x40], rsi
+4c280c: mov qword ptr [rax + 0x30], rdi
+4c2810: mov rsi, qword ptr [rsp + 0x38]
+4c2815: add rsi, -0x2c
+4c2819: mov qword ptr [rax + 0x20], rsi
+4c281d: mov qword ptr [rax + 0x28], rbx
+4c2821: mov qword ptr [rax + 0x18], rdx
+4c2825: xor ebx, ebx
+4c2827: xor ecx, ecx
+4c2829: sub rsp, -0x80
+4c282d: pop rbp
+4c282e: ret 
+4c282f: mov rcx, rax
+4c2832: mov eax, 0x2c
+4c2837: call 0x469020   ; runtime.panicSliceB
+4c283c: mov ecx, 0x2c
+4c2841: mov rdx, rsi
+4c2844: call 0x468fe0   ; runtime.panicSliceAcap
+4c2849: mov ecx, 0xc   ; str='H\x00\x00\x00\x00\x00\x00\x008\x00\x00\x00'
+4c284e: mov rdx, rsi
+4c2851: call 0x468fe0   ; runtime.panicSliceAcap
+4c2856: mov rax, r9
+4c2859: call 0x469020   ; runtime.panicSliceB
+4c285e: mov ecx, 8
+4c2863: call 0x468f60   ; runtime.panicIndex
+4c2868: mov ecx, 8
+4c286d: mov rdx, rdi
+4c2870: call 0x468fe0   ; runtime.panicSliceAcap
+4c2876: mov qword ptr [rsp + 8], rax
+4c287b: mov qword ptr [rsp + 0x10], rbx
+4c2880: call 0x466c80   ; runtime.morestack_noctxt
+4c2885: mov rax, qword ptr [rsp + 8]
+4c288a: mov rbx, qword ptr [rsp + 0x10]
+4c288f: jmp 0x4c2580
+
+==== zeuslock/internal/lock.GetUSBCandidates

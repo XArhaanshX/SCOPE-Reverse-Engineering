@@ -2,6 +2,8 @@
 
 This is the plain-language companion to `PROGRESS.md`. It explains every term that file uses, and it shows how we found each fact, including the wrong turns. Read it top to bottom; each section builds on the one before.
 
+Part 3 is a hands-on guide. It repeats the whole path as numbered steps with exact commands, the output you should see at each step, and a link back to the explanation of why the step works. Parts 1 and 2 explain, Part 3 lets you do it yourself, and Part 4 is the review of our mistakes.
+
 ## The goal
 
 The track asks for the original, human-readable source of `ppqqcc.exe`. Somebody wrote this program in a programming language, compiled it into machine code, and then wrapped it in protection so that nobody could read it. Our job is to undo the wrapping, understand the machine code, and write the program back out as source code.
@@ -187,7 +189,282 @@ A few Go facts will help when reading the disassembly:
 - Calls shown as `?` that land just past a function's start are `duffcopy` or `duffzero`, which copy or clear structs.
 - Global variables are reached through `rip`-relative addresses. `os.Stdin`, `os.Stdout` and `os.Stderr` sit next to each other, which is how we told them apart, and `os.Args` is a three-word slice (pointer, length, capacity).
 
-## Part 3: what the mistakes taught us
+## Part 3: hands-on guide, reproduce it yourself
+
+This guide takes you from the raw `ppqqcc.exe` to the point where the key derivation is understood, which is as far as the organisers' material allows. Each step has the same layout. You get what to do, the command, what you should see, and which section above explains why it works.
+
+How the expected values were obtained. Steps 1 to 4 and step 10 were re-run on 2026-10-26 and matched our first run exactly. The values in steps 7 and 8 come from our first sandbox run, taken from the notes and from the dump we saved. If your numbers differ slightly in steps 7 and 8 (the process id, the exact region file names), that is normal. The sizes and the function table in steps 8 to 10 should match.
+
+Run everything from the repo root. You need Linux with Python 3. Steps 6 to 8 also need Wine and bubblewrap. Step 12 optionally needs Go.
+
+### Step 0: set up Python
+
+```sh
+python3 -m venv tools/re-venv
+tools/re-venv/bin/pip install pefile capstone unicorn pycryptodome
+```
+
+The libraries are `pefile` (reads the Windows executable format), `capstone` (disassembler), `unicorn` (emulator, only used by an abandoned script) and `pycryptodome` (AES). The `-I` flag in every command below makes Python ignore the current directory and environment variables, so a file planted next to a script cannot hijack an import. Keep it.
+
+### Step 1: look at the file
+
+```sh
+tools/re-venv/bin/python -I tools/pe_recon.py challenges/task3_ppqqcc/ppqqcc.exe
+tail -c 32 challenges/task3_ppqqcc/ppqqcc.exe | xxd
+```
+
+You should see:
+
+- `ImageBase=0x400000  EntryPointRVA=0x8b0000  EP VA=0xcb0000`
+- Seven sections. Two have random names (`kqihfdgz`, `ahbtcmsa`), two large ones score entropy around 7.9, one 3.7 MB section holds almost nothing in the file, and the entry point sits in `ahbtcmsa`.
+- Only two imports, `lstrcpy` and `InitCommonControls`.
+- An overlay of 4,433,996 bytes with entropy 8.00.
+- In the last 32 bytes, the 16 bytes `20dfc31e b3f6178d 87b740b9 fe422291`, then the text `ZEUSLOCK`, then `00 00 00 00 00 43 a8 3c`.
+
+What it proves. The file is packed and protected, and it carries a trailer that the program probably reads itself. See "First look: recon" and "Entropy" above. The file size is 8,156,236 bytes. The trailer size `0x43a83c` is 4,433,980 bytes, which is the overlay minus the 16 bytes of `ZEUSLOCK` and the size field.
+
+### Step 2: undo the first layer
+
+```sh
+tools/re-venv/bin/python -I tools/unpack_stage1.py challenges/task3_ppqqcc/ppqqcc.exe /tmp/ppqqcc-unpacked
+```
+
+Expected output:
+
+```
+stage2: 3743564 bytes (src consumed up to RVA 0x8affb2), loaded at RVA 0x32a014
+```
+
+The script does two things in one go, which the next two steps check separately. It applies `(dword ^ 0xA018003) + 0x705F000` to the first 0x1000 bytes of section `kqihfdgz`, then runs aPLib decompression. Output goes to `/tmp/ppqqcc-unpacked/stage1_image.bin` and `stage2.bin`. Nothing is executed. The script only reads bytes and does arithmetic. See "Layer 1: the entry stub".
+
+To see the stub yourself first, disassemble the entry point:
+
+```sh
+tools/re-venv/bin/python -I - <<'EOF'
+import pefile, capstone
+pe = pefile.PE('challenges/task3_ppqqcc/ppqqcc.exe')
+rva = 0x8b0000
+code = pe.get_memory_mapped_image()[rva:rva + 0x80]
+md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+for i in md.disasm(code, 0x400000 + rva):
+    print(hex(i.address), i.mnemonic, i.op_str)
+EOF
+```
+
+Look for three things. First, `call` followed by `int3` and then `pop rax`, which is the anti-debug trick. Second, `cmp byte ptr [rbx], 0xcc`, the check that nobody put a breakpoint there. Third, the loop `xor dword ptr [rsi], eax` then `add dword ptr [rsi], ebx`, which is the decryption, with the constants `0xa018003` and `0x705f000` pushed just before it.
+
+### Step 3: check that the first layer really decrypted
+
+A wrong decryption gives garbage instructions, so the quickest test is to disassemble the result:
+
+```sh
+tools/re-venv/bin/python -I - <<'EOF'
+import capstone
+d = open('/tmp/ppqqcc-unpacked/stage1_image.bin', 'rb').read()
+md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
+for i, ins in zip(range(6), md.disasm(d[0x6bd000:0x6bd040], 0x400000 + 0x6bd000)):
+    print(hex(ins.address), ins.mnemonic, ins.op_str)
+EOF
+```
+
+You should see six pushes of registers starting at `0xabd000`: `push rax`, `push rbx`, `push rcx`, `push rdx`, `push rsi`, `push rdi`. That is how a function begins, so the cipher is right. To see what garbage looks like, disassemble the same offset of the mapped image before the cipher is applied. Use `pefile.PE(...).get_memory_mapped_image()[0x6bd000:0x6bd040]` in place of `d[0x6bd000:0x6bd040]`.
+
+### Step 4: undo the aPLib layer
+
+Step 2 already did this, but check the result:
+
+```sh
+sha256sum /tmp/ppqqcc-unpacked/stage2.bin
+grep -ao Themida /tmp/ppqqcc-unpacked/stage2.bin | head -1
+```
+
+Expected hash:
+
+```
+11af84f37c8337f3351d77a8ebc4c823aedd6275cc5228d72cf43d35a6122242
+```
+
+The `grep` should print `Themida`, and the first four bytes of `stage2.bin` are `e9 f8 17 00`, a `jmp`. This is where the story changes. The compressed data starts at RVA `0x6bd2ba` of the decrypted image, and the 3.7 MB it decompresses to is not our program. It is Themida. See "Layer 2" and "Layer 3" above.
+
+Cross-check with a second implementation. [herrcore/aplib-ripper](https://github.com/herrcore/aplib-ripper) contains an independent aPLib decompressor, `aplib.decompress(data).do()`. Its command-line mode will not work here because it looks for compressed Windows programs (`M8Z`), and ours is raw code. Calling the decompressor directly on `stage1_image.bin` from offset `0x6bd2ba` should produce the same 3,743,564 bytes. We have not run this check. It is a good exercise, and it needs a small Python 3 shim, because the repo is Python 2 (`xrange` and byte strings).
+
+The static road ends here. The program you want sits behind a virtual machine that Themida runs, and emulating it fails (see "Layer 3" for why). The overlay cannot be decrypted by guessing either (see "The overlay, and our third mistake"). That leaves running the program, safely.
+
+### Step 5: decide how to run it safely
+
+Only step 7 runs the executable. Do not run `ppqqcc.exe` directly on your desktop. Use a sandbox. We used Wine inside bubblewrap. A virtual machine with no network works as well.
+
+Check that bubblewrap and Wine exist:
+
+```sh
+which bwrap wine && wine --version
+```
+
+We used Wine 11.20. See "Running it safely" for what each sandbox option does.
+
+### Step 6: build the sandbox and check that it is isolated
+
+```sh
+mkdir -p /tmp/zlsb/work /tmp/zlsb/scripts
+cp challenges/task3_ppqqcc/ppqqcc.exe /tmp/zlsb/work/
+cp tools/sandbox/dump.py /tmp/zlsb/scripts/
+tools/sandbox/run.sh sh -c 'cat /proc/net/dev; ls /home'
+```
+
+The second command must show only the `lo` interface, and `ls` must say that `/home` does not exist. If you see `eth0`, `wlan0` or your home directory, stop and fix the sandbox before going on. Then create the Wine prefix (this takes a while the first time):
+
+```sh
+tools/sandbox/run.sh sh -c 'timeout 120 wineboot -i'
+```
+
+### Step 7: run it and dump its memory
+
+```sh
+tools/sandbox/run.sh python3 -I /scripts/dump.py ppqqcc.exe 15 /work/dump
+cat /tmp/zlsb/work/dump/stdout.txt
+```
+
+`dump.py` starts Wine, waits 15 seconds for Themida to finish unpacking, then reads every readable memory region of the process. It must be the parent of the process, because this machine's `ptrace_scope` is 1 (see "Memory dumping").
+
+You should see:
+
+```
+target pid 3
+253 regions dumped
+```
+
+and, in `stdout.txt`, the program's own message:
+
+```
+No licensed USB drive was detected. Please connect it and try again.
+
+Press Enter to close.
+```
+
+That message is itself useful. It tells you the program reached its licence check, so Themida has already unpacked everything. The dump is about 187 MB, and it is mostly Wine's own files. If the dump script prints `target pid None`, wait longer (try 30 seconds), or check that `/proc/sys/kernel/yama/ptrace_scope` is not 2 or 3.
+
+### Step 8: stitch the program image together
+
+Look at `/tmp/zlsb/work/dump/maps.txt`. The regions from `00400000` to `00cb7000` that belong to `/work/ppqqcc.exe` or follow it directly are the program. Join them in address order:
+
+```sh
+mkdir -p /tmp/zl
+cd /tmp/zlsb/work/dump && cat 000000400000-* 000000401000-* 000000594000-* 000000728000-* \
+  000000729000-* 00000072a000-* 000000cb1000-* > /tmp/zl/image.bin && cd -
+ls -l /tmp/zl/image.bin
+```
+
+The file must be exactly 9,138,176 bytes, which is `0xcb7000 - 0x400000`. If the size is wrong, a region is missing or the file names differ in your run. Compare against `maps.txt`.
+
+### Step 9: confirm it is Go
+
+```sh
+strings -n 6 /tmp/zl/image.bin | grep -E 'go-1\.22|zeuslock|crypto/aes' | sort -u | head
+```
+
+You should see paths such as `/home/claude/zeuslock2/cmd/zeuslock-run/main.go`, `zeuslock/internal/lock`, and AES types like `*aes.aesCipher`. See "Recognising Go".
+
+### Step 10: list the functions
+
+```sh
+IMAGE=/tmp/zl/image.bin tools/re-venv/bin/python -I tools/go_pclntab.py
+```
+
+The first line must read:
+
+```
+pcHeader @ 0x51b0c0 nfunc 2134 text 0x401000
+```
+
+and the output continues with one line per function (address, size, name). The ones that matter are:
+
+| Address | Function |
+| --- | --- |
+| `0x4c1b80` | `zeuslock/internal/lock.init` |
+| `0x4c1be0` | `lock.GenerateUSBHash` |
+| `0x4c1e60` | `lock.DecryptPayload` |
+| `0x4c21c0` | `lock.RunEmbeddedExecutable` |
+| `0x4c2500` | `lock.ExtractSelfTrailer` |
+| `0x4c2580` | `lock.ExtractTrailerFromFile` |
+| `0x4c28a0` | `lock.sha512Sum16` |
+| `0x4c2bc0` | `lock.GetUSBCandidates` |
+| `0x4c2ea0` | `lock.getWindowsDrives` |
+| `0x4c3060` | `lock.isRemovableDrive` |
+| `0x4c31a0` | `lock.getVolumeInfo` |
+| `0x4c34a0` | `lock.getDeviceInfo` |
+| `0x4c3580` | `lock.getDriveSize` |
+| `0x4c3900`, `0x4c3a80`, `0x4c3b00` | `main.pause`, `main.fail`, `main.main` |
+
+This is the payoff of the whole route. Go's function table survived Themida, so you get real names instead of anonymous code. See "Recognising Go".
+
+### Step 11: read the functions in a sensible order
+
+Disassemble one function at a time by name:
+
+```sh
+IMAGE=/tmp/zl/image.bin tools/re-venv/bin/python -I tools/go_pclntab.py main.main
+```
+
+Read in this order, and look for the listed evidence in each. The tool prints the called function's name beside every `call` and the text beside every loaded string.
+
+| Order | Function | What to look for |
+| --- | --- | --- |
+| 1 | `main.main` | Calls to `ExtractSelfTrailer`, `GetUSBCandidates`, then `GenerateUSBHash`, `DecryptPayload` and `RunEmbeddedExecutable`. The four messages. |
+| 2 | `main.fail`, `main.pause` | `fmt.Fprintln`, `bufio.(*Reader).ReadString` with `0xa` (newline), `os.Exit` with 1. |
+| 3 | `ExtractTrailerFromFile` | `os.ReadFile`, `runtime.memequal` over 8 bytes (the `ZEUSLOCK` check), the bound `0x2c`. |
+| 4 | `GetUSBCandidates` | Calls to `getWindowsDrives`, `isRemovableDrive`, `getVolumeInfo`, `getDeviceInfo`, `getDriveSize`. Each struct is `0x68` bytes. |
+| 5 | `getVolumeInfo`, `getDriveSize` | `GetVolumeInformationW`, `GetDiskFreeSpaceExW`, the format string `%08X`. |
+| 6 | `getDeviceInfo`, `sha512Sum16` | `os.hostname`, `concatstring2`, `crypto/sha512.Sum512`, then hex conversion of three slices of the digest (16, 8 and 8 bytes). |
+| 7 | `GenerateUSBHash` | `fmt.Sprintf` with `%s\|%s\|%s\|%s\|%s\|%d`, then `Sum512`. |
+| 8 | `DecryptPayload` | `Sum512`, `crypto/aes.NewCipher` with length `0x20` (32), `newGCMWithNonceAndTagSize` with 12 and 16, the error text `decryption failed: USB parameters do not match`. |
+| 9 | `RunEmbeddedExecutable` | Writing a file, `os/exec`, the deferred removal. |
+
+Use the rules from "Reading the functions". Go passes arguments in `rax`, `rbx`, `rcx`, `rdi`, `rsi`, `r8`, and a string is a pointer plus a length. A line like `mov ebx, 0x2e` right after `lea rax, [rip + ...]` is almost always a string whose length is `0x2e`. The tool prints that string for you.
+
+### Step 12: check the key derivation
+
+Now put the pieces together. The scheme you have read is:
+
+```
+h        = sha512(drive_root + hostname)
+A, B, C  = hex(h[0:16]), hex(h[16:24]), hex(h[24:32])
+usbhash  = hex(sha512("A|B|C|label|serial|size"))
+key      = sha512(salt + usbhash)[:32]        (AES-256-GCM, nonce first, salt last)
+```
+
+The script `tools/zeuslock_decrypt.py` implements it. Its arguments are the executable, an output file, the drive root, the hostname, the volume label, the volume serial in hex, and the drive size in bytes:
+
+```sh
+tools/re-venv/bin/python -I tools/zeuslock_decrypt.py \
+  challenges/task3_ppqqcc/ppqqcc.exe /tmp/payload.bin 'E:\' MYHOST MYLABEL 1234ABCD 16000000000
+```
+
+With made-up values this ends with `ValueError: MAC check failed`. That is the correct result. AES-GCM refuses to return anything when the key is wrong, and every wrong drive, wrong hostname or wrong size fails the same way. A correct set of values would print `ok:` and write the decrypted executable. We have no such values, so step 12 cannot finish. That is why the payload stays locked.
+
+To check the scheme without the real drive, run the tests of the reconstruction. They compare `GenerateUSBHash` with a known value, decrypt a small test payload through the full key derivation, check the exact wrong-key error, and parse the real trailer of `ppqqcc.exe` (a 4,433,952-byte ciphertext, plus its nonce and salt). The expected values were computed separately in Python:
+
+```sh
+cd reconstruction && go test ./...
+```
+
+This needs Go. If it passes, the Go code agrees with an independent implementation on the hash, the key and the error text, and with the real file on the trailer layout.
+
+### Step 13: compare with the reconstruction
+
+Open `reconstruction/README.md`. Its table maps each recovered function to a source file. For each row, disassemble the function from step 11 and check the behaviour in the source. For example, check that `main.go` prints the four messages in the same conditions as `main.main`, that `lock.go` uses the same 8-byte magic and the `0x2c` minimum, and that `usb_windows.go` calls the same four kernel32 functions. This is the review that has not been done by a second person yet.
+
+### If something goes wrong
+
+| Symptom | Likely cause and fix |
+| --- | --- |
+| `ModuleNotFoundError: pefile` | Run with `tools/re-venv/bin/python`, not the system Python. |
+| `stage2: ...` shows a different size | The input file is not the original. Check that its size is 8,156,236 bytes. |
+| `target pid None` in step 7 | Themida needs more time (raise 15 to 30), or `ptrace_scope` blocks reading. |
+| Image is not 9,138,176 bytes | A region is missing from step 8. Compare with `maps.txt`. |
+| `go_pclntab.py` finds no header | The image is wrong or incomplete, or the dump was taken before unpacking finished. |
+| `MAC check failed` in step 12 | Expected for any wrong drive parameters. |
+
+## Part 4: what the mistakes taught us
 
 The first mistake was reading one instruction pattern (the `MZ` scan) as the whole story. Reading a little further would have shown that the scan finds the program's own base and that a decompressor follows.
 
