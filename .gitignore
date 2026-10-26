@@ -10,3 +10,4 @@ tools/re-venv/
 challenges/task3_ppqqcc/unpacked/
 image_after.bin
 payload_*.bin
+tools/qiling-src/

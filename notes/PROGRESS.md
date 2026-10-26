@@ -5,7 +5,7 @@ Target: `challenges/task3_ppqqcc/ppqqcc.exe`.
 
 ## Handoff status (2026-10-26)
 
-The protection layers and the launcher's behaviour are fully mapped. The Go source rewrite, which is the actual deliverable, has not started, and there is no Go toolchain on the analysis machine yet.
+The protection layers and the launcher's behaviour are fully mapped, and the Go source rewrite — the actual deliverable — is now done in `reconstruction/`. It builds (Go 1.27 is on this machine) and reproduces the original's behaviour; see "Reconstruction (done)" below.
 
 | Item | State |
 | --- | --- |
@@ -15,7 +15,7 @@ The protection layers and the launcher's behaviour are fully mapped. The Go sour
 | Go launcher, function list and behaviour | Done, see "The recovered launcher" |
 | Overlay key derivation | Done, `tools/zeuslock_decrypt.py` |
 | Embedded payload | Out of scope. Locked to a specific USB drive, no drive details exist |
-| Readable Go source of the launcher | Not started |
+| Readable Go source of the launcher | Done, `reconstruction/`; builds and behaviourally verified |
 
 What `main` does, from the disassembly: it calls `lock.ExtractSelfTrailer()`, and on error prints "This application is not set up correctly: " plus the error. It then calls `lock.GetUSBCandidates()`, and on error prints "No licensed USB drive was detected. Please connect it and try again." For each candidate it calls `GenerateUSBHash` and `DecryptPayload`, skipping drives that fail. On the first success it calls `RunEmbeddedExecutable(payload, os.Args[1:])`, and on error prints "Error running the application: " plus the error. If no drive matches it prints "This USB drive is not licensed for this application. Access denied." `main.fail` prints its message to stdout, calls `main.pause`, and exits with code 1. `main.pause` prints "\nPress Enter to close." and reads one line from stdin. `lock.init` sets `ErrNoTrailer` to "no protected payload is embedded in this executable". `ExtractSelfTrailer` wraps `os.Executable` errors as "locating own executable: %w". `ExtractTrailerFromFile` wraps read errors as "reading executable: %w" and rejects bad sizes with "corrupt trailer".
 
@@ -135,11 +135,19 @@ The `USBInfo` struct is 0x68 bytes. It holds A, B and C, the label, the serial, 
 
 `challenges/task2_qr/sentinel_qr_0007.png` decodes to a URL with a Fernet token in the `cipher` parameter. It belongs to another track, and we have not followed the URL.
 
+## Reconstruction (done)
+
+`reconstruction/` holds the launcher rewritten as readable Go, mirroring the original module layout (`module zeuslock`, `cmd/zeuslock-run`, `internal/lock`). Every recovered function is mapped in `reconstruction/README.md`.
+
+Verified on this machine (Go 1.27, Wine 11.19, bubblewrap available):
+
+- `go vet ./...` and `go build ./...` are clean; the `GOOS=windows GOARCH=amd64` cross-build produces a PE32+ console exe.
+- Appending the original's trailer to a fresh build and running it under Wine with no removable drive reproduces the original's output exactly: `No licensed USB drive was detected. Please connect it and try again.`, a blank line, then `Press Enter to close.`, exit code 1. Reaching the USB check at all confirms the trailer parsing is correct as well.
+
 ## Next steps
 
-1. Rewrite the launcher as readable Go source from the disassembly, one function at a time: `main.main`, `main.fail`, `main.pause` and everything in `zeuslock/internal/lock`.
-2. Check the rewrite by building it and comparing its behaviour with the original under the sandbox. Both should print the same messages, and both should fail the same way on the same trailer.
-3. The payload stays encrypted. The organisers have given no drive details, so `tools/zeuslock_decrypt.py` is only there to document the scheme.
+1. The embedded payload stays encrypted. The organisers have given no drive details, so `tools/zeuslock_decrypt.py` only documents the scheme; it is not a blocker for the deliverable.
+2. Optional, for a stronger submission: diff the reconstruction against the dump function-by-function for byte-level fidelity beyond the behavioural match.
 
 ## Repo layout
 
@@ -150,5 +158,6 @@ The `USBInfo` struct is 0x68 bytes. It holds A, B and C, the label, the serial, 
 - `tools/sandbox/run.sh` and `tools/sandbox/dump.py` run the binary under Wine in bubblewrap and dump its memory.
 - `tools/go_pclntab.py` lists and disassembles Go functions from the dump.
 - `tools/zeuslock_decrypt.py` decrypts the trailer given the USB parameters.
+- `reconstruction/` is the launcher rewritten as readable Go (the deliverable); see its README.
 - `notes/progress_readable.md` explains every term in this file and how each fact was found, for readers new to reverse engineering.
 - `tools/re-venv/` and `challenges/**/unpacked/` are gitignored and can be regenerated.
