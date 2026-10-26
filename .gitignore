@@ -1,0 +1,8 @@
+artifacts/
+*.log
+__pycache__/
+.venv/
+venv/
+*.pyc
+.DS_Store
+challenges/binaries/
