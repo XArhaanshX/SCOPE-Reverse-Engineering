@@ -141,7 +141,7 @@ On Linux every process has `/proc/<pid>/maps`, which lists its memory regions, a
 
 ### Recognising Go
 
-Running `strings` on the dump (it prints every run of readable characters) showed names like `runtime.main`, `crypto/aes` and `/usr/lib/go-1.22/src/...`. That means the program is written in Go, version 1.22, and it uses AES. One path was `/home/claude/zeuslock2/cmd/zeuslock-run/main.go`, which gives the author's project name.
+Running `strings` on the dump (it prints every run of readable characters) showed names like `runtime.main`, `crypto/aes` and `/usr/lib/go-1.22/src/...`. That means the program is written in Go, version 1.22, and it uses AES. One build path ended in `zeuslock2/cmd/zeuslock-run/main.go`, which gives the author's project name.
 
 Go is good news for reverse engineers. Go binaries carry a table called pclntab (program counter line table). The Go runtime uses it to print stack traces when a program crashes, so it cannot be removed. It maps every function's address to its full name. `tools/go_pclntab.py` finds the table (it starts with the bytes `F1 FF FF FF`), reads it, and disassembles chosen functions. It labels every call with the name of the function being called and every string the code loads. Instead of anonymous code we had names like `zeuslock/internal/lock.DecryptPayload`.
 
@@ -362,7 +362,7 @@ The file must be exactly 9,138,176 bytes, which is `0xcb7000 - 0x400000`. If the
 strings -n 6 /tmp/zl/image.bin | grep -E 'go-1\.22|zeuslock|crypto/aes' | sort -u | head
 ```
 
-You should see paths such as `/home/claude/zeuslock2/cmd/zeuslock-run/main.go`, `zeuslock/internal/lock`, and AES types like `*aes.aesCipher`. See "Recognising Go".
+You should see build paths ending in `zeuslock2/cmd/zeuslock-run/main.go`, module paths like `zeuslock/internal/lock`, and AES types like `*aes.aesCipher`. See "Recognising Go".
 
 ### Step 10: list the functions
 
