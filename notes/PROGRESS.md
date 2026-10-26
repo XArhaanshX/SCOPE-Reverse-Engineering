@@ -1,60 +1,94 @@
-# SCOPE Reverse Engineering — progress
+# SCOPE reverse engineering progress
 
-**Track:** Reverse engineering — recover the original, human-readable source of a provided application.
-**Target:** `ppqqcc.exe` (from the hackathon repo).
+Track: reverse engineering. The goal is to recover the original, human-readable source of a provided application.
+Target: `challenges/task3_ppqqcc/ppqqcc.exe`.
 
-## Summary so far
+## Where we are
 
-`ppqqcc.exe` is a **post-quantum crypto tool** (the generator behind the crypto-track
-file `pass.txt.pqenc`), wrapped in a **custom protector we've named "ZEUSLOCK"** (magic
-string `ZEUSLOCK` in the file footer; the same family protects the other repo binary
-`zeusfinal.exe`).
+`ppqqcc.exe` has three layers, and we have now opened all of them:
 
-### Fingerprint
-- PE32+ (x86-64) console, 7 sections, ~8 MB.
-- Randomized section names (`kqihfdgz`, `ahbtcmsa`), a 3.7 MB zero-filled section
-  (unpack destination), two high-entropy blobs (`kqihfdgz` 2 MB + a 4.4 MB overlay,
-  entropy ~8.0), and a near-empty import table (`kernel32!lstrcpy`,
-  `comctl32!InitCommonControls`) — everything else resolved at runtime.
-- Footer at EOF: `<16-byte key/IV> "ZEUSLOCK" <big-endian size 0x43a83c>`.
+1. A small entry stub decrypts the first 0x1000 bytes of section `kqihfdgz`.
+2. That code is an aPLib decompressor, which unpacks the protector.
+3. The protector is Themida 3.x. Inside it is a Go 1.22 program, module `zeuslock`, package `cmd/zeuslock-run`.
 
-### Protector behaviour (reversed statically)
-- **Anti-debug:** `call/int3/pop` RIP trick + `cmp byte[ret],0xCC` self-check, and a
-  later `cmp byte,0xE9` jmp-hook check.
-- **Stage-1 cipher** (recovered): per-dword `plain = (cipher ^ 0xA018003) + 0x705F000`,
-  applied to the first 0x1000 bytes of `kqihfdgz`. Decrypts to valid x86-64.
-- **Stage 1** is a position-independent loader that scans memory for an embedded
-  `MZ`/`PE` (checks `MZ` = 0x5A4D and `PE\0\0` via `e_lfanew`) — i.e. the real
-  `ppqqcc.exe` is an **embedded PE** decrypted and mapped at runtime.
-- **Import resolution is dynamic** (PEB / kernel32 export walk).
+The Go program is a USB-licence launcher. It reads an AES-256-GCM encrypted executable from the end of its own file. It derives the key from the properties of a removable drive and the PC's hostname, then decrypts the executable into the temp directory and runs it. On a machine without the licensed drive it prints "No licensed USB drive was detected" and waits for Enter.
 
-### Why pure Unicorn emulation stalls
-The stub walks the PEB to resolve APIs. With no Windows process environment (no PEB,
-no mapped `kernel32` export table) the scan never terminates — the in-process Unicorn
-harness spins out its instruction budget without materializing the payload. Confirmed,
-not a bug in the harness.
+We have recovered the full decryption scheme. We cannot decrypt the embedded executable yet because we don't know the licensed drive's parameters.
 
-### Decision
-Proceeding with **Qiling** (a Windows emulation layer — PEB + stub DLLs — on top of
-Unicorn) so the unpack runs entirely on Linux, statically, without ever executing the
-real binary as a process. Expected output: the embedded payload PE, which we then
-decompile (likely .NET→C# or PyInstaller→.py, given "human-readable source").
+## What we tried, and what we got wrong
 
-### Linked finding (crypto track, not ours but relevant)
-`pass.txt.pqenc` is a KEM/DEM hybrid: **ML-KEM-1024** (`kem_cipher` 1568 B) +
-**ML-DSA-87** (`public_key` 2592 B, `signature` 4627 B) + **AES-256-GCM**
-(`nonce` 12 B, `auth_tag` 16 B, `ciphertext` 229 B). The crib (`msbj`) only reveals
-4 bytes of GCM keystream; decryption needs the KEM secret key or a key recovered from
-`ppqqcc.exe` — another reason the two tracks are linked.
+### Treating the stub as a PE loader
+
+We decrypted the entry stub correctly. Each dword in the first 0x1000 bytes of `kqihfdgz` becomes `(c ^ 0xA018003) + 0x705F000`. The decrypted code then scans backwards in memory for `MZ` and `PE\0\0`, and we read that as a search for an embedded PE that it would map and run.
+
+That was wrong. The scan only finds the module's own image base. The rest of the code is the standard aPLib depacker (`aP_depack`). It decompresses 3,743,564 bytes from RVA `0x6bd2ba` to RVA `0x32a014` and jumps there. `tools/unpack_stage1.py` reproduces this without running anything.
+
+### Emulating the unpack with Unicorn, then planning Qiling
+
+Our Unicorn harness (`tools/unpack_emu.py`) never produced a payload, and we blamed the missing PEB and kernel32 export table. We planned to move to Qiling to supply those.
+
+The real reason is that the depacked stage is Themida 3.x. The string `Themida` appears in it. The import table holds only `lstrcpy` and `InitCommonControls`, the section names are random, and a 3.7 MB section is empty. Themida runs its unpacking in a virtual machine with anti-emulation checks, so Qiling would most likely have stalled the same way. We dropped the emulation approach.
+
+### Attacking the overlay as if the footer held the key
+
+The file ends with a 4.4 MB overlay and a footer: 16 bytes, then `ZEUSLOCK`, then a big-endian size. We assumed the 16 bytes were an AES-128 key. We tried AES in ECB, CBC, CFB, OFB, CTR and GCM, plus ChaCha20, Salsa20, RC4 and XOR. We used the raw bytes and MD5, SHA-1 and SHA-256 derivations of them. Nothing decrypted.
+
+The 16 bytes are a salt, not a key. The real key depends on the USB drive, so no amount of guessing from the file alone would have worked.
+
+### Running the binary in a sandbox
+
+We stopped trying to unpack Themida statically. Instead we ran the program under Wine 11.20 inside bubblewrap. The sandbox has no network (only loopback), a read-only root filesystem, no home directory, no display and a cleared environment. Its only writable directory is a scratch directory. Docker was not an option because our user has no access to the Docker socket.
+
+Themida unpacked normally under Wine. While the program waited at "Press Enter", `tools/sandbox/dump.py` read every mapped region of the process through `/proc/<pid>/mem`. The dump at `0x400000` holds the unpacked Go program.
+
+## The recovered launcher
+
+Go binaries keep function names in `pclntab`. `tools/go_pclntab.py` parses it from the dump and disassembles functions with call targets and string references marked. The interesting functions are in `zeuslock/internal/lock`:
+
+| Function | Purpose |
+| --- | --- |
+| `ExtractSelfTrailer`, `ExtractTrailerFromFile` | Read the program's own file and parse the trailer |
+| `GetUSBCandidates` | List drives that `GetDriveTypeW` reports as removable |
+| `getVolumeInfo` | Get the volume label and serial (`GetVolumeInformationW`, serial formatted `%08X`) |
+| `getDeviceInfo` | Run `sha512Sum16(drive + os.Hostname())` |
+| `getDriveSize` | Get total bytes (`GetDiskFreeSpaceExW`) |
+| `GenerateUSBHash` | Return the hex SHA-512 of `"%s\|%s\|%s\|%s\|%s\|%d"` over the fields below |
+| `DecryptPayload` | Decrypt with AES-256-GCM using the key below |
+| `RunEmbeddedExecutable` | Write the plaintext to the temp directory and run it with `os/exec` |
+
+The trailer layout is `[nonce 12][ciphertext + GCM tag 16][salt 16]["ZEUSLOCK"][u64 BE size]`. The size counts the nonce, ciphertext and salt. Here it is 0x43a83c.
+
+The key derivation:
+
+```
+h        = sha512(drive_root + hostname)            # drive_root such as "E:\"
+A, B, C  = hex(h[0:16]), hex(h[16:24]), hex(h[24:32])
+usbhash  = hex(sha512("A|B|C|<volume label>|<volume serial %08X>|<total bytes>"))
+key      = sha512(salt + usbhash)[:32]
+```
+
+The `USBInfo` struct is 0x68 bytes. It holds A, B and C, the label, the serial, the size as an `int64`, and the drive root. The hash uses every field except the drive root, which enters through `h` instead.
+
+`tools/zeuslock_decrypt.py` implements this. It takes the drive root, hostname, label, serial and size. The GCM tag check tells us right away whether the parameters are correct.
+
+## Linked crypto-track files
+
+`challenges/task1_pqenc/pass.txt.pqenc` is a KEM/DEM hybrid. It uses ML-KEM-1024 (`kem_cipher`, 1568 bytes), ML-DSA-87 (`public_key` 2592 bytes, `signature` 4627 bytes) and AES-256-GCM (12-byte nonce, 16-byte tag, 229-byte ciphertext). The launcher contains no post-quantum code, so the PQ tool is probably the encrypted embedded executable.
+
+`challenges/task2_qr/sentinel_qr_0007.png` decodes to a URL with a Fernet token in the `cipher` parameter. It belongs to another track, and we have not followed the URL.
+
+## Next steps
+
+1. Look for the licensed drive's parameters in the challenge material. We need the hostname, drive letter, volume label, volume serial and drive size. Ask the organisers whether the "licensed USB" exists as an image or a description.
+2. Decide what to submit as "source" if the payload stays locked. The launcher can be rewritten in Go from the disassembly, since we know every function and its behaviour.
+3. If we get the parameters, run `tools/zeuslock_decrypt.py` and decompile the payload.
 
 ## Repo layout
-- `tools/pe_recon.py` — static PE recon (sections, entropy, imports, TLS, overlay).
-- `tools/unpack_emu.py` — Unicorn unpack attempt (stalls at API resolution; kept for record).
-- `challenges/task3_ppqqcc/ppqqcc.exe` — target binary.
-- `challenges/task1_pqenc/`, `challenges/task2_qr/` — other-track inputs for reference.
-- `tools/re-venv/` and `challenges/**/unpacked/` are gitignored (regenerable).
 
-## Next
-1. Set up Qiling + minimal Windows rootfs.
-2. Emulate the unpack, dump the embedded payload PE at OEP, rebuild IAT.
-3. Identify payload runtime and decompile to source.
+- `tools/pe_recon.py` does static PE recon (sections, entropy, imports, TLS, overlay).
+- `tools/unpack_emu.py` is the abandoned Unicorn attempt, kept for the record.
+- `tools/unpack_stage1.py` statically reproduces the stub decrypt and the aPLib stage.
+- `tools/sandbox/run.sh` and `tools/sandbox/dump.py` run the binary under Wine in bubblewrap and dump its memory.
+- `tools/go_pclntab.py` lists and disassembles Go functions from the dump.
+- `tools/zeuslock_decrypt.py` decrypts the trailer given the USB parameters.
+- `tools/re-venv/` and `challenges/**/unpacked/` are gitignored and can be regenerated.
