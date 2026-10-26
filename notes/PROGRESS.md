@@ -5,6 +5,8 @@ Target: `challenges/task3_ppqqcc/ppqqcc.exe`.
 
 ## Handoff status (2026-10-26)
 
+**Requirement 1 (full human-readable source of `ppqqcc.exe`):** the launcher source is fully recovered and verified — `go vet`/`go build` clean, `go test ./...` passes, the `GOOS=windows` cross-build reproduces the original's exact output, and GoReSym recovers the same function namespace as the original's pclntab. This is a behavioural reconstruction (unexported local names are ours; not byte-identical). The embedded AES-256-GCM payload remains encrypted — its key requires the licensed drive's label, serial, size and the target hostname, none of which were provided, so it cannot be recovered from the file alone.
+
 The protection layers and the launcher's behaviour are fully mapped, and the Go source rewrite — the actual deliverable — is now done in `reconstruction/`. It builds (Go 1.27 is on this machine) and reproduces the original's behaviour; see "Reconstruction (done)" below.
 
 | Item | State |
